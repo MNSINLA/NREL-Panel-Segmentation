@@ -20,7 +20,8 @@ from pyproj import Transformer
 
 def generateSatelliteImage(latitude, longitude,
                            file_name_save, google_maps_api_key,
-                           zoom_level=18):
+                           zoom_level=18,
+                           request_session=None):
     """
     Generates satellite image via Google Maps, using a set of lat-long
     coordinates.
@@ -63,12 +64,13 @@ def generateSatelliteImage(latitude, longitude,
     lat_long = str(latitude) + ", " + str(longitude)
     # get method of requests module
     # return response object
-    r = requests.get(
+    request_client = request_session if request_session is not None \
+        else requests
+    r = request_client.get(
         "https://maps.googleapis.com/maps/api/staticmap?maptype"
         "=satellite&center=" + lat_long +
         "&zoom=" + str(zoom_level) + "&size=40000x40000&key=" +
-        google_maps_api_key,
-        verify=False)
+        google_maps_api_key)
     # Raise an exception if image is not successfully returned
     if r.status_code != 200:
         raise ValueError("Response status code " +
@@ -84,7 +86,8 @@ def generateSatelliteImage(latitude, longitude,
     return Image.open(file_name_save)
 
 
-def generateAddress(latitude, longitude, google_maps_api_key):
+def generateAddress(latitude, longitude, google_maps_api_key,
+                    request_session=None):
     """
     Gets the address of a latitude, longitude coordinates using Google
     Geocoding API. Please note rates for running geocoding checks here:
@@ -100,6 +103,8 @@ def generateAddress(latitude, longitude, google_maps_api_key):
         Google Maps API Key for geocoding a site. For further information,
         see here:
         https://developers.google.com/maps/documentation/geocoding/overview
+    request_session: requests.Session, default None
+        Optional requests session to reuse across many geocoding lookups.
 
     Returns
     -----------
@@ -114,8 +119,10 @@ def generateAddress(latitude, longitude, google_maps_api_key):
     if not isinstance(google_maps_api_key, str):
         raise TypeError("google_maps_api_key variable must be "
                         "of type string.")
+    request_client = request_session if request_session is not None \
+        else requests
     # return response object
-    r = requests.get(
+    r = request_client.get(
         "https://maps.googleapis.com/maps/api/geocode/json?latlng=" +
         str(latitude) + "," + str(longitude) + "&key=" + google_maps_api_key,
         verify=True)
@@ -135,7 +142,10 @@ def generateSatelliteImageryGrid(northwest_latitude, northwest_longitude,
                                  file_save_folder,
                                  zoom_level=18,
                                  lat_lon_distance=0.00145,
-                                 number_allowed_images_taken=6000):
+                                 number_allowed_images_taken=6000,
+                                 request_delay_min_seconds=1.0,
+                                 request_delay_max_seconds=5.0,
+                                 print_progress=True):
     """
     Take satellite images via the Google Maps API in a grid fashion for a large
     area, and save the associated images to a folder. The associated images
@@ -173,6 +183,15 @@ def generateSatelliteImageryGrid(northwest_latitude, northwest_longitude,
         stopping. If we pull too many images in one go, google may flag
         this as webscraping so it's advised to not pull too many images
         at once.
+    request_delay_min_seconds : float, default 1.0
+        Minimum delay between newly downloaded images. Set to 0.0 to disable
+        throttling.
+    request_delay_max_seconds : float, default 5.0
+        Maximum delay between newly downloaded images. Set to 0.0 to disable
+        throttling.
+    print_progress : bool, default True
+        Whether to print progress and summary information while pulling the
+        image grid.
 
     Returns
     -------
@@ -206,6 +225,22 @@ def generateSatelliteImageryGrid(northwest_latitude, northwest_longitude,
             isinstance(number_allowed_images_taken, bool):
         raise TypeError("number_allowed_images_taken variable must be "
                         "of type int.")
+    if not isinstance(request_delay_min_seconds, (int, float)) or \
+            isinstance(request_delay_min_seconds, bool):
+        raise TypeError("request_delay_min_seconds variable must be "
+                        "of type float or int.")
+    if not isinstance(request_delay_max_seconds, (int, float)) or \
+            isinstance(request_delay_max_seconds, bool):
+        raise TypeError("request_delay_max_seconds variable must be "
+                        "of type float or int.")
+    if not isinstance(print_progress, bool):
+        raise TypeError("print_progress variable must be of type bool.")
+    if request_delay_min_seconds < 0 or request_delay_max_seconds < 0:
+        raise ValueError("request delay variables must be non-negative.")
+    if request_delay_min_seconds > request_delay_max_seconds:
+        raise ValueError("request_delay_min_seconds must be less than or "
+                         "equal to request_delay_max_seconds.")
+    os.makedirs(file_save_folder, exist_ok=True)
     # Build the grid out
     start_lat, start_lon = northwest_latitude, northwest_longitude
     lat_list, lon_list = [start_lat], [start_lon]
@@ -218,41 +253,72 @@ def generateSatelliteImageryGrid(northwest_latitude, northwest_longitude,
         start_lon = start_lon + lat_lon_distance
         lon_list.append(start_lon)
     counter = 0
-    coord_list = list()
+    processed_count = 0
+    existing_count = 0
     grid_location_list = list()
+    total_grid_locations = len(lat_list) * len(lon_list)
+    if print_progress:
+        print("Starting satellite grid pull for " +
+              str(total_grid_locations) + " tiles with delay range " +
+              str(request_delay_min_seconds) + "-" +
+              str(request_delay_max_seconds) + " seconds.")
     grid_y = 0
-    for lon in lon_list:
-        grid_x = 0
-        for lat in lat_list:
-            coord_list.append((lat, lon))
-            # For every coordinate, take a satellite image and save it
-            file_name = (str(round(lat, 7)) + "_" + str(
-                         round(lon, 7)) + ".png")
-            file_save = os.path.join(file_save_folder,
-                                     file_name)
-            grid_location_list.append({"file_name": file_name,
-                                       "latitude": lat,
-                                       "longitude": lon,
-                                       "grid_x": grid_x,
-                                       "grid_y": grid_y})
-            grid_x += 1
-            if not os.path.exists(file_save):
-                generateSatelliteImage(lat, lon,
-                                       file_save,
-                                       google_maps_api_key,
-                                       zoom_level)
-            else:
-                print("File already pulled!")
-                continue
-            counter += 1
-            time.sleep(random.randint(1, 5))
-            if counter >= number_allowed_images_taken:
-                break
-        grid_y += 1
+    with requests.Session() as request_session:
+        for lon in lon_list:
+            grid_x = 0
+            for lat in lat_list:
+                # For every coordinate, take a satellite image and save it
+                file_name = (str(round(lat, 7)) + "_" + str(
+                             round(lon, 7)) + ".png")
+                file_save = os.path.join(file_save_folder,
+                                         file_name)
+                grid_location_list.append({"file_name": file_name,
+                                           "latitude": lat,
+                                           "longitude": lon,
+                                           "grid_x": grid_x,
+                                           "grid_y": grid_y})
+                grid_x += 1
+                processed_count += 1
+                if not os.path.exists(file_save):
+                    generateSatelliteImage(lat, lon,
+                                           file_save,
+                                           google_maps_api_key,
+                                           zoom_level,
+                                           request_session=request_session)
+                    counter += 1
+                    if request_delay_max_seconds > 0:
+                        if request_delay_min_seconds == \
+                                request_delay_max_seconds:
+                            time.sleep(request_delay_min_seconds)
+                        else:
+                            time.sleep(
+                                random.uniform(request_delay_min_seconds,
+                                               request_delay_max_seconds)
+                            )
+                    if counter >= number_allowed_images_taken:
+                        if print_progress:
+                            print("Downloaded " + str(counter) +
+                                  " new tiles and reached the limit of " +
+                                  str(number_allowed_images_taken) + ".")
+                        return grid_location_list
+                else:
+                    existing_count += 1
+                if print_progress and (processed_count % 25 == 0 or
+                                       processed_count ==
+                                       total_grid_locations):
+                    print("Processed " + str(processed_count) + "/" +
+                          str(total_grid_locations) + " tiles; downloaded " +
+                          str(counter) + " new, reused " +
+                          str(existing_count) + " existing.")
+            grid_y += 1
+    if print_progress:
+        print("Finished satellite grid pull; downloaded " + str(counter) +
+              " new tiles and reused " + str(existing_count) + ".")
     return grid_location_list
 
 
-def visualizeSatelliteImageryGrid(grid_location_list, file_save_folder):
+def visualizeSatelliteImageryGrid(grid_location_list, file_save_folder,
+                                  print_file_names=False):
     """
     Using the grid_location_list output from the
     generateSatelliteImageryGrid() function, visualize all of the images
@@ -266,6 +332,8 @@ def visualizeSatelliteImageryGrid(grid_location_list, file_save_folder):
     file_save_folder: Str
         Folder path where all of the outputed satellite images from the
         generateSatelliteImageryGrid() function are stored.
+    print_file_names: bool, default False
+        Whether to print every PNG file name while building the grid plot.
 
     Returns
     -------
@@ -279,6 +347,8 @@ def visualizeSatelliteImageryGrid(grid_location_list, file_save_folder):
         raise TypeError("grid_location_list must be a list of dictionaries.")
     if not isinstance(file_save_folder, str):
         raise TypeError("file_save_folder variable must be of type str.")
+    if not isinstance(print_file_names, bool):
+        raise TypeError("print_file_names variable must be of type bool.")
     # Get the max grid coordinates so we can build the appropriate matplotlib
     # gridded graphic
     x_max = max([x['grid_x'] for x in grid_location_list]) + 1
@@ -291,7 +361,8 @@ def visualizeSatelliteImageryGrid(grid_location_list, file_save_folder):
     # Read in all of the imagery into the grid
     for file in grid_location_list:
         file_name = file['file_name']
-        print(file_name)
+        if print_file_names:
+            print(file_name)
         x_loc = file['grid_x']
         y_loc = file['grid_y']
         img = Image.open(os.path.join(file_save_folder, file_name))

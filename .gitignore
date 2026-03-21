@@ -1,15 +1,37 @@
-# Custom .gitignore files
-
+# Local config
 config.yaml
+.env
+.env.local
+.env.*.local
 *.vs/
-**.pyc
-
-# Jupyter Notebook
-.ipynb_checkpoints
-
-# sphinx
-build
-generated
-
-venv/
 .idea/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+
+# Virtual environments
+venv/
+.venv/
+env/
+ENV/
+
+# Packaging / build outputs
+build/
+dist/
+generated/
+outputs/**
+!outputs/
+!outputs/README.md
+
+# Jupyter
+.ipynb_checkpoints/
+
+# OS / editor noise
+.DS_Store
+Thumbs.db

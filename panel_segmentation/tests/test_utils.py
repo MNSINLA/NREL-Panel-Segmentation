@@ -370,11 +370,7 @@ def testGenerateSatelliteImageryGridOutput(satelliteImageGridParams, mocker):
         {'file_name': '37.18385_-113.70663.png', 'latitude': 37.18385,
             'longitude': -113.70663, 'grid_x': 0, 'grid_y': 0},
         {'file_name': '37.17385_-113.70663.png', 'latitude': 37.17385,
-            'longitude': -113.70663, 'grid_x': 1, 'grid_y': 0},
-        {'file_name': '37.18385_-113.69663.png', 'latitude': 37.18385,
-            'longitude': -113.69663, 'grid_x': 0, 'grid_y': 1},
-        {'file_name': '37.18385_-113.68663.png', 'latitude': 37.18385,
-            'longitude': -113.68663, 'grid_x': 0, 'grid_y': 2}
+            'longitude': -113.70663, 'grid_x': 1, 'grid_y': 0}
     ]
     # Assert that mocked expected output equals to actual output
     assert actual_output == expected_output

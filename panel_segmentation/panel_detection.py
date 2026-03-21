@@ -26,6 +26,9 @@ from torchvision import transforms
 from torchvision.ops import nms
 import warnings
 
+from torchvision.models.detection import fasterrcnn_resnet50_fpn
+from torchvision.models.detection.faster_rcnn import FastRCNNPredictor
+
 panel_seg_model_path = path.join(path.dirname(__file__),
                                  'models',
                                  'VGG16Net_ConvTranpose_complete.h5')
@@ -35,6 +38,32 @@ panel_classification_model_path = path.join(path.dirname(__file__),
 mounting_classification_path = path.join(path.dirname(__file__),
                                          'models',
                                          'object_detection_model.pth')
+
+
+def _load_mounting_classifier(model_file_path, classes):
+    """
+    Load the Detecto mounting-classification model without using the
+    deprecated torchvision ``pretrained=`` interface.
+    """
+    model = core.Model.__new__(core.Model)
+    model._device = torch.device('cuda') if torch.cuda.is_available() \
+        else torch.device('cpu')
+
+    detector = fasterrcnn_resnet50_fpn(weights=None, weights_backbone=None)
+    in_features = detector.roi_heads.box_predictor.cls_score.in_features
+    detector.roi_heads.box_predictor = FastRCNNPredictor(
+        in_features, len(classes) + 1)
+    detector.to(model._device)
+    detector.load_state_dict(torch.load(model_file_path,
+                                        map_location=model._device))
+
+    model._model = detector
+    model._disable_normalize = False
+    model._classes = ['__background__'] + classes
+    model._int_mapping = {
+        label: index for index, label in enumerate(model._classes)
+    }
+    return model
 
 
 class PanelDetection:
@@ -48,6 +77,10 @@ class PanelDetection:
     def __init__(self, model_file_path=panel_seg_model_path,
                  classifier_file_path=panel_classification_model_path,
                  mounting_classifier_file_path=mounting_classification_path):
+        mounting_classes = ["ground-fixed",
+                            "carport-fixed",
+                            "rooftop-fixed",
+                            "ground-single_axis_tracker"]
         # This is the model used for detecting if there is a panel or not
         self.classifier = load_model(classifier_file_path,
                                      custom_objects=None,
@@ -55,11 +88,8 @@ class PanelDetection:
         self.model = load_model(model_file_path,
                                 custom_objects=None,
                                 compile=False)
-        self.mounting_classifier = core.Model.load(
-            mounting_classifier_file_path, ["ground-fixed",
-                                            "carport-fixed",
-                                            "rooftop-fixed",
-                                            "ground-single_axis_tracker"])
+        self.mounting_classifier = _load_mounting_classifier(
+            mounting_classifier_file_path, mounting_classes)
 
     def generateSatelliteImage(self, latitude, longitude,
                                file_name_save, google_maps_api_key):
@@ -106,8 +136,7 @@ class PanelDetection:
         r = requests.get(
             "https://maps.googleapis.com/maps/api/staticmap?maptype"
             "=satellite&center=" + lat_long +
-            "&zoom=18&size=35000x35000&key="+google_maps_api_key,
-            verify=False)
+            "&zoom=18&size=35000x35000&key="+google_maps_api_key)
         # Raise an exception if image is not successfully returned
         if r.status_code != 200:
             raise ValueError("Response status code " +
